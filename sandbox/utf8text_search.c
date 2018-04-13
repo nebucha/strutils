@@ -5,7 +5,7 @@
 #include <unicode/ustring.h>
 #include <unicode/usearch.h>
 
-#define MAX_TEXT_LENGTH 102400
+#define MAX_TEXT_LENGTH 256*1024*1024
 #define MAX_PATTERN_LENGTH 1024
 
 // カウントモード
@@ -213,7 +213,7 @@ int main(int argc, char *argv[])
                 if (strlen(optarg) < MAX_PATTERN_LENGTH) {
                     strcpy(pattern, optarg);
                 } else {
-                    fprintf(stderr, "%s: Parameter error -- pattern string length must be less than %d.\n", argv[0], MAX_PATTERN_LENGTH);
+                    fprintf(stderr, "%s: Parameter error -- pattern string length is too long.\n", argv[0]);
                     fprintf(stderr, "Usage: %s [-lb] -p pattern [filename]\n", argv[0]);
                     exit(1);
                 }
