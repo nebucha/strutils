@@ -17,12 +17,38 @@ typedef struct match_result {
     int length;
     struct match_result *next;
 } MatchResult;
+
 MatchResult *matchResult = NULL;        // 文字数単位
 MatchResult *matchResultAsByte = NULL;  // バイト数単位
+MatchResult *current = NULL;
+MatchResult *b_current = NULL;
+int prefix = 0;
+int b_prefix = 0;
+
+/* 初期化 */
+void init() {
+    // 結果格納リストを初期化
+    matchResult = (MatchResult*)malloc(sizeof(MatchResult));
+    matchResult->index = -1;
+    matchResult->length = 0;
+    matchResult->next = NULL;
+
+    matchResultAsByte = (MatchResult*)malloc(sizeof(MatchResult));
+    matchResultAsByte->index = -1;
+    matchResultAsByte->length = 0;
+    matchResultAsByte->next = NULL;
+
+    current = matchResult;
+    b_current = matchResultAsByte;
+}
 
 /* 検索を実行 */
 int text_search(const char *text, const char *pattern) 
 {
+    if (matchResult == NULL) {
+        init();
+    }
+
     int32_t length = -1;                    // 文字列のサイズ、NULL終端文字列の場合は-1
     UErrorCode errorCode = U_ZERO_ERROR;    // エラーコード
     const char *locale = uloc_getDefault(); // ロケール
@@ -48,18 +74,6 @@ int text_search(const char *text, const char *pattern)
         return -1;
     }
 
-    // 結果格納リストを初期化
-    matchResult = (MatchResult*)malloc(sizeof(MatchResult));
-    matchResult->index = -1;
-    matchResult->length = 0;
-    matchResult->next = NULL;
-    MatchResult *current = matchResult;
-
-    matchResultAsByte = (MatchResult*)malloc(sizeof(MatchResult));
-    matchResultAsByte->index = -1;
-    matchResultAsByte->length = 0;
-    matchResultAsByte->next = NULL;
-    MatchResult *b_current = matchResultAsByte;
     int pre_position = 0;
     int b_pos = 0;
 
@@ -70,7 +84,7 @@ int text_search(const char *text, const char *pattern)
 
         // 結果を格納
         MatchResult *res = (MatchResult*)malloc(sizeof(MatchResult));
-        res->index = position;
+        res->index = prefix + position;
         res->length = matchLength;
         res->next = NULL;
         current->next = res;
@@ -85,7 +99,7 @@ int text_search(const char *text, const char *pattern)
         int b_matchLength = count_U8_bytes(tmp, matchLength);
         // 結果を格納
         MatchResult *b_res = (MatchResult*)malloc(sizeof(MatchResult));
-        b_res->index = b_pos;
+        b_res->index = b_prefix + b_pos;
         b_res->length = b_matchLength;
         b_res->next = NULL;
         b_current->next = b_res;
@@ -99,6 +113,10 @@ int text_search(const char *text, const char *pattern)
     if (U_FAILURE(errorCode)) {
         fprintf(stderr, "Couldn't detect the keyword.\n");
     }
+
+    // プレフィックスを更新
+    prefix += utextLength;
+    b_prefix += count_U8_bytes(utext, utextLength);
 
     usearch_close(search);
 
@@ -137,22 +155,26 @@ int count_U8_bytes(UChar *text, int32_t length) {
 
 /* 格納された結果をクリアする */
 void clear_result() {
-    MatchResult *current = matchResult;
+    MatchResult *a_current = matchResult;
     MatchResult *next;
-    while ((next=current->next) != NULL) {
-        free(current);
-        current = next;
+    while ((next=a_current->next) != NULL) {
+        free(a_current);
+        a_current = next;
     }
     free(next);
     matchResult = NULL;
 
-    current = matchResultAsByte;
-    while ((next=current->next) != NULL) {
-        free(current);
-        current = next;
+    a_current = matchResultAsByte;
+    while ((next=a_current->next) != NULL) {
+        free(a_current);
+        a_current = next;
     }
     free(next);
     matchResultAsByte = NULL;
+    current = NULL;
+    b_current = NULL;
+    prefix = 0;
+    b_prefix = 0;
 }
 
 int main(void)
@@ -162,9 +184,16 @@ int main(void)
     // 2つ目のポプテピピックはコードポイント数11
 
     const char *pattern = "ポプテピピック";     // コードポイント数7
+
+    init();
     text_search(text, pattern);
+    printf("%d - %d\n", prefix, b_prefix);
+
+    text_search(text, pattern);
+    printf("%d - %d\n", prefix, b_prefix);
 
     print_result();
+    printf("\n");
     print_result_as_byte();
 
     clear_result();
