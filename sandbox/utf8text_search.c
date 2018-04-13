@@ -1,10 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <unicode/ustring.h>
 #include <unicode/usearch.h>
 
 #define MAX_TEXT_LENGTH 102400
 #define MAX_PATTERN_LENGTH 1024
+
+// カウントモード
+enum countmode {
+    CHARACTER,  // 文字数単位
+    BYTE        // バイト単位
+};
+
+// 検索モード
+enum linemode {
+    LINE,       // 1行ずつ検索
+    ALL         // 一括検索
+};
 
 int count_U8_bytes(UChar*, int32_t);
 int text_search(const char*, const char*);
@@ -40,6 +54,8 @@ void init() {
 
     current = matchResult;
     b_current = matchResultAsByte;
+    prefix = 0;
+    b_prefix = 0;
 }
 
 /* 検索を実行 */
@@ -84,7 +100,7 @@ int text_search(const char *text, const char *pattern)
 
         // 結果を格納
         MatchResult *res = (MatchResult*)malloc(sizeof(MatchResult));
-        res->index = prefix + position;
+        res->index = prefix + position + 1;
         res->length = matchLength;
         res->next = NULL;
         current->next = res;
@@ -99,11 +115,13 @@ int text_search(const char *text, const char *pattern)
         int b_matchLength = count_U8_bytes(tmp, matchLength);
         // 結果を格納
         MatchResult *b_res = (MatchResult*)malloc(sizeof(MatchResult));
-        b_res->index = b_prefix + b_pos;
+        b_res->index = b_prefix + b_pos + 1;
         b_res->length = b_matchLength;
         b_res->next = NULL;
         b_current->next = b_res;
         b_current = b_res;
+
+        memset(tmp, 0, MAX_TEXT_LENGTH *4);
 
         // 次のマッチ位置へ進む
         position = usearch_next(search, &errorCode);
@@ -128,7 +146,7 @@ void print_result() {
     MatchResult *current = matchResult;
     while (current->next != NULL) {
         current = current->next;
-        printf("Detected at %d, length is %d.\n", current->index, current->length);
+        printf("Detected at %dth character, length is %d.\n", current->index, current->length);
     }
 }
 
@@ -137,7 +155,7 @@ void print_result_as_byte() {
     MatchResult *current = matchResultAsByte;
     while (current->next != NULL) {
         current = current->next;
-        printf("Detected at %d, length is %d.\n", current->index, current->length);
+        printf("Detected at %dth byte, length is %d.\n", current->index, current->length);
     }
 }
 
@@ -177,24 +195,116 @@ void clear_result() {
     b_prefix = 0;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
-    const char *text = "あいうえおポプテピピックさしすせそポプテピピックたちつてとポプポプテピピックなにぬねの"; 
-    // 1つ目と3つ目のポプテピピックはコードポイント数7
-    // 2つ目のポプテピピックはコードポイント数11
+    char text[MAX_TEXT_LENGTH];
+    char pattern[MAX_PATTERN_LENGTH];
+    enum countmode cmode = CHARACTER;
+    enum linemode lmode = ALL;
+    char *p;
+    char *filename = NULL; 
+    FILE *fp = NULL;
 
-    const char *pattern = "ポプテピピック";     // コードポイント数7
+    // オプション解析
+    int opt = 0;
+    while ((opt = getopt(argc, argv, "hlbp:")) != -1) {
+        switch (opt) {
+            case 'p':
+                if (strlen(optarg) < MAX_PATTERN_LENGTH) {
+                    strcpy(pattern, optarg);
+                } else {
+                    fprintf(stderr, "%s: Parameter error -- pattern string length must be less than %d.\n", argv[0], MAX_PATTERN_LENGTH);
+                    fprintf(stderr, "Usage: %s [-lb] -p pattern [filename]\n", argv[0]);
+                    exit(1);
+                }
+                break;
+            case 'b':
+                cmode = BYTE;
+                break;
+            case 'l':
+                lmode = LINE;
+                break;
+            case 'h':
+                fprintf(stderr, "Usage: %s [-lb] -p pattern [filename]\n", argv[0]);
+                exit(1);
+            default:
+                fprintf(stderr, "Usage: %s [-lb] -p pattern [filename]\n", argv[0]);
+                exit(1);
+                break;
+        }
+    }
 
-    init();
-    text_search(text, pattern);
-    printf("%d - %d\n", prefix, b_prefix);
+    // パターンが指定されていない場合はエラー
+    if (strlen(pattern) <= 0) {
+            fprintf(stderr, "Pattern string is necessary.n");
+            fprintf(stderr, "Usage: %s [-lb] -p pattern [filename]\n", argv[0]);
+        exit(1);
+    }
 
-    text_search(text, pattern);
-    printf("%d - %d\n", prefix, b_prefix);
+    // 引数にファイル名が指定されていれば、ファイルから読み込む
+    // ファイル名が指定されていなければ、標準入力から読み込む
+    if (optind < argc) {
+        filename = argv[optind];
+        if ((fp = fopen(filename, "r")) == NULL) {
+            fprintf(stderr, "File open error: %s\n", filename);
+            exit(1);
+        }
+    } else {
+        fp = stdin;
+    }
 
-    print_result();
-    printf("\n");
-    print_result_as_byte();
+    int line;
 
-    clear_result();
+    switch (lmode) {
+        case ALL:
+            // 検索結果の初期化
+            init();
+
+            // 読み込みと検索実行
+            while (fread(text, sizeof(char), sizeof(text), fp) != 0) {
+                text_search(text, pattern);
+            }
+
+            // 結果の表示
+            switch(cmode) {
+                case CHARACTER:
+                    printf("%d characters:\n", prefix);
+                    print_result();
+                    break;
+                case BYTE:
+                    printf("%d bytes:\n", b_prefix);
+                    print_result_as_byte();
+                    break;
+                default:
+                    break;
+            }       
+
+            // 検索結果をクリア
+            clear_result();
+            break;
+
+        case LINE:
+            // 読み込みと検索実行 1行ずつ表示
+            for (line = 1; fgets(text, sizeof(text), fp); line++) {
+                init();
+                text_search(text, pattern);
+                printf("Line %d:\n", line);
+                switch(cmode) {
+                    case CHARACTER:
+                        print_result();
+                        break;
+                    case BYTE:
+                        print_result_as_byte();
+                        break;
+                    default:
+                        break;
+                }       
+                clear_result();
+            }
+            break;
+
+        default:
+            break;
+    }
+
 }
